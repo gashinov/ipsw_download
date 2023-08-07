@@ -1,47 +1,49 @@
 #!/bin/bash
 
 # Paths to download files
-IPSW_DEST_FOLDER="/mnt/ipsw/"  # Don't forget to add trailing slash
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+ipsw_dest_folder="/mnt/ipsw/"  # Don't forget to add trailing slash
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 # Hostname
 HOSTNAME=$(hostname)
 
 # Arrays to store IPSW file URLs
-available_ipsws=()
-loaded_ipsws=()
-load_ipsws=()
+available_ipsws=("")
+loaded_ipsws=("")
+load_ipsws=("")
 
-# Check if curl command is available
-if ! command -v curl &> /dev/null; then
-    echo "curl  command is not found. Please install curl."
-    exit 1
-fi
-
-# Check if wget command is available
+# Check commands are available
 if ! command -v wget &> /dev/null; then
     echo "wget command is not found. Please install wget."
     exit 1
 fi
 
+if ! command -v sendmail &> /dev/null; then
+  echo "sendmail command is not found. Please install sendmail."
+  exit 1
+fi
+
+
 # Check if the job is already running
 # Create pid file
-SCRIPT_PID="/var/run/${0##*/}.pid"
+script_pid="/var/run/${0##*/}.pid"
 
-if [[ -f ${SCRIPT_PID} ]]; then
+if [[ -f ${script_pid} ]]; then
     echo "Script is already running"
     exit
 else
-    touch ${SCRIPT_PID}  # Create the pid file
+    touch ${script_pid}  # Create the pid file
 fi
 
 # Ensure PID file is removed on program exit.
 cleanup() {
-    rm -f -- "${SCRIPT_PID}"
+    rm -f -- "${script_pid}"
     unset available_ipsws
     unset loaded_ipsws
     unset load_ipsws
-    rm "${SCRIPT_DIR}/mail.txt"
+    if [ -f "${script_dir}/mail.txt" ]; then
+        rm "${script_dir}/mail.txt"
+    fi
 }
 
 trap cleanup EXIT
@@ -50,7 +52,7 @@ trap cleanup EXIT
 available_ipsws=$(wget --quiet --output-document - http://ax.phobos.apple.com.edgesuite.net/WebObjects/MZStore.woa/wa/com.apple.jingle.appserver.client.MZITunesClientCheck/version | sed -e 's/^[[:space:]]*//' -e 's/<string>//' -e 's/\(<\/string>\)*$//g' | grep -i 'http' | grep -i Restore | grep -ie 'iPhone\|iPad\|iPod' | sort | uniq)
 
 # Previously loaded IPSWs by this script
-loaded_ipsws=($(< "${SCRIPT_DIR}/${0##*/}.db"))
+loaded_ipsws=($(< "${script_dir}/${0##*/}.db"))
 
 IFS=" " read -r -a available_ipsws <<< "$(echo "${available_ipsws[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ')"
 IFS=" " read -r -a loaded_ipsws <<< "$(echo "${loaded_ipsws[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ')"
@@ -77,29 +79,36 @@ echo "${load_ipsws[*]}"
 if [ -n "$load_ipsws" ]; then
 
     # Create the IPSW folder if it doesn't exist
-    mkdir -p "${IPSW_DEST_FOLDER}"
+    if ! mkdir -p "${ipsw_dest_folder}"; then
+        echo "Failed to create IPSW folder: ${ipsw_dest_folder}"
+        exit 1
+    fi
 
     for ((i=0; i<${#load_ipsws[@]}; i++)); do
         # Download file and retry up to 5 times
-        wget --quiet -t 5 -c "${load_ipsws[i]}" --directory-prefix "${IPSW_DEST_FOLDER}"
-        # Check if file download was successful
-        if [ $? -eq 0 ]; then
-            echo "${load_ipsws[i]}" >> "${SCRIPT_DIR}/${0##*/}.db"
+        wget --quiet -t 5 -c "${load_ipsws[i]}" --directory-prefix "${ipsw_dest_folder}"
+        if [ $? -ne 0 ]; then
+            echo "Failed to download file: ${load_ipsws[i]}"
+        else
+            echo "${load_ipsws[i]}" >> "${script_dir}/${0##*/}.db"
         fi
     done
 
     # Grant permissions to user
-    # chown -R nobody:support "${IPSW_DEST_FOLDER}"
-    chmod -R 644 "${IPSW_DEST_FOLDER}"
+    # chown -R nobody:support "${ipsw_dest_folder}"
+    chmod -R 644 "${ipsw_dest_folder}"
 
     # Build the email content
-    printf "date: %s\nfrom: system@pretend.co\nto: support@pretend.co\nsubject: New items were loaded\n\n" "$(date +%d-%m-%y)" >> "${SCRIPT_DIR}/mail.txt"
-    printf  "Some new items were found. Don't worry, they are already loaded.\n" >> "${SCRIPT_DIR}/mail.txt"
-    printf "%s\n" "${load_ipsws[@]}" >> "${SCRIPT_DIR}/mail.txt"
-    printf "\n--\niOS Loader\n" >> "${SCRIPT_DIR}/mail.txt"
+    printf "date: %s\nfrom: system@pretend.co\nto: support@pretend.co\nsubject: New items were loaded\n\n" "$(date +%d-%m-%y)" >> "${script_dir}/mail.txt"
+    printf  "Some new items were found. Don't worry, they are already loaded.\n" >> "${script_dir}/mail.txt"
+    printf "%s\n" "${load_ipsws[@]}" >> "${script_dir}/mail.txt"
+    printf "\n--\niOS Loader\n" >> "${script_dir}/mail.txt"
 
     # Send the email
-    /usr/sbin/sendmail -f "system@pretend.co" support@pretend.co < "${SCRIPT_DIR}/mail.txt"
+    /usr/sbin/sendmail -f "system@pretend.co" support@pretend.co < "${script_dir}/mail.txt"
+    if [ $? -ne 0 ]; then
+        echo "Failed to send email"
+    fi
 
 else
     exit 1
