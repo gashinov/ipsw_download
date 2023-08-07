@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Paths to download files
-IPSW_DEST_FOLDER="/iOS/_latest"
+IPSW_DEST_FOLDER="/mnt/ipsw/"  # Don't forget to add trailing slash
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 # Hostname
@@ -11,6 +11,18 @@ HOSTNAME=$(hostname)
 AVAILABLE_IPSWS=()
 LOADED_IPSWS=()
 LOAD_IPSWS=()
+
+# Check if curl command is available
+if ! command -v curl &> /dev/null; then
+    echo "curl  command is not found. Please install curl."
+    exit 1
+fi
+
+# Check if wget command is available
+if ! command -v wget &> /dev/null; then
+    echo "wget command is not found. Please install wget."
+    exit 1
+fi
 
 # Check if the job is already running
 # Create pid file
@@ -35,7 +47,7 @@ cleanup() {
 trap cleanup EXIT
 
 # Get the list of IPSW files from Apple
-AVAILABLE_IPSWS=$(curl -s -L http://phobos.apple.com/version | sed -e 's/^[[:space:]]*//' -e 's/<string>//' -e 's/\(<\/string>\)*$//g' | grep -i 'http://' | grep -i Restore | grep -ie 'iPhone\|iPad\|iPod' | sort | uniq)
+AVAILABLE_IPSWS=$(curl -s -L http://ax.phobos.apple.com.edgesuite.net/WebObjects/MZStore.woa/wa/com.apple.jingle.appserver.client.MZITunesClientCheck/version | sed -e 's/^[[:space:]]*//' -e 's/<string>//' -e 's/\(<\/string>\)*$//g' | grep -i 'http://' | grep -i Restore | grep -ie 'iPhone\|iPad\|iPod' | sort | uniq)
 
 # Previously loaded IPSWs by this script
 LOADED_IPSWS=($(< "${SCRIPT_DIR}/${0##*/}.db"))
@@ -54,12 +66,6 @@ if [ ${#LOAD_IPSWS[@]} -gt 0 ]; then
     # Create the IPSW folder if it doesn't exist
     mkdir -p "${IPSW_DEST_FOLDER}"
 
-    # Check if wget command is available
-    if ! command -v wget &> /dev/null; then
-        echo "wget command is not found. Please install wget."
-        exit 1
-    fi
-
     for ((i=0; i<${#LOAD_IPSWS[@]}; i++)); do
         # Download file and retry up to 5 times
         wget -t 5 -c "${LOAD_IPSWS[i]}"
@@ -70,19 +76,14 @@ if [ ${#LOAD_IPSWS[@]} -gt 0 ]; then
     done
 
     # Grant permissions to user
-    chown -R nobody:support "${IPSW_DEST_FOLDER}"
+    # chown -R nobody:support "${IPSW_DEST_FOLDER}"
     chmod -R 644 "${IPSW_DEST_FOLDER}"
 
     # Build the email content
-    echo "date: $(date +%d-%m-%y)" > "${SCRIPT_DIR}/mail.txt"
-    echo "to: support@pretend.co" >> "${SCRIPT_DIR}/mail.txt"
-    echo "subject: iOS Loader | New items were loaded" >> "${SCRIPT_DIR}/mail.txt"
-    echo "from: system@pretend.co" >> "${SCRIPT_DIR}/mail.txt"
-    echo "Some new items were found. Don't worry, they are already loaded." >> "${SCRIPT_DIR}/mail.txt"
+    printf "date: %s\n" "$(date +%d-%m-%y)" "from: system@pretend.co" "to: support@pretend.co" "subject: New items were loaded" >> "${SCRIPT_DIR}/mail.txt"
+    printf  "Some new items were found. Don't worry, they are already loaded." >> "${SCRIPT_DIR}/mail.txt"
     printf "%s\n" "${LOAD_IPSWS[@]}" >> "${SCRIPT_DIR}/mail.txt"
-    echo >> "${SCRIPT_DIR}/mail.txt"
-    echo -- >> "${SCRIPT_DIR}/mail.txt"
-    echo "iOS Loader" >> "${SCRIPT_DIR}/mail.txt"
+    printf "\n" "--\n" "iOS Loader" >> "${SCRIPT_DIR}/mail.txt"
 
     # Send the email
     /usr/sbin/sendmail system@pretend.co < "${SCRIPT_DIR}/mail.txt"
