@@ -1,17 +1,5 @@
 #!/bin/bash
 
-# Paths to download files
-ipsw_dest_folder="/mnt/ipsw/"  # Don't forget to add trailing slash
-script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-
-# Hostname
-HOSTNAME=$(hostname)
-
-# Arrays to store IPSW file URLs
-available_ipsws=("")
-loaded_ipsws=("")
-load_ipsws=("")
-
 # Check commands are available
 if ! command -v wget &> /dev/null; then
     echo "wget command is not found. Please install wget."
@@ -22,7 +10,6 @@ if ! command -v sendmail &> /dev/null; then
   echo "sendmail command is not found. Please install sendmail."
   exit 1
 fi
-
 
 # Check if the job is already running
 # Create pid file
@@ -41,12 +28,15 @@ cleanup() {
     unset available_ipsws
     unset loaded_ipsws
     unset load_ipsws
-    if [ -f "${script_dir}/mail.txt" ]; then
-        rm "${script_dir}/mail.txt"
-    fi
 }
 
 trap cleanup EXIT
+
+# Paths to download files
+ipsw_dest_folder="/mnt/ipsw/"  # Don't forget to add trailing slash
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+email="${script_dir}/mail.txt"
 
 # Get the list of IPSW files from Apple
 available_ipsws=$(wget --quiet --output-document - http://ax.phobos.apple.com.edgesuite.net/WebObjects/MZStore.woa/wa/com.apple.jingle.appserver.client.MZITunesClientCheck/version | sed -e 's/^[[:space:]]*//' -e 's/<string>//' -e 's/\(<\/string>\)*$//g' | grep -i 'http' | grep -i Restore | grep -ie 'iPhone\|iPad\|iPod' | sort | uniq)
@@ -68,15 +58,15 @@ diff() {
         fi
     done
 
-    # echo "${diff_array[@]}"   # debug
+    #cecho "${diff_array[@]}"   # debug
 }
 
 load_ipsws=($(diff available_ipsws[@] loaded_ipsws[@]))
 
-echo "${load_ipsws[*]}"
+# echo "${load_ipsws[*]}"
 
 # Download new files
-if [ -n "$load_ipsws" ]; then
+if [[ -n $load_ipsws ]]; then
 
     # Create the IPSW folder if it doesn't exist
     if ! mkdir -p "${ipsw_dest_folder}"; then
@@ -99,19 +89,23 @@ if [ -n "$load_ipsws" ]; then
     chmod -R 644 "${ipsw_dest_folder}"
 
     # Build the email content
-    printf "date: %s\nfrom: system@pretend.co\nto: support@pretend.co\nsubject: New items were loaded\n\n" "$(date +%d-%m-%y)" >> "${script_dir}/mail.txt"
-    printf  "Some new items were found. Don't worry, they are already loaded.\n" >> "${script_dir}/mail.txt"
-    printf "%s\n" "${load_ipsws[@]}" >> "${script_dir}/mail.txt"
-    printf "\n--\niOS Loader\n" >> "${script_dir}/mail.txt"
+    printf "date: %s\nfrom: system@pretend.co\nto: support@pretend.co\nsubject: New items were loaded\n\n" "$(date +%d-%m-%y)" >> "${email}"
+    printf  "Some new items were found. Don't worry, they are already loaded.\n" >> "${email}"
+    printf "%s\n" "${load_ipsws[@]}" >> "${email}"
+    printf "\n--\niOS Loader\n" >> "${email}"
 
     # Send the email
-    /usr/sbin/sendmail -f "system@pretend.co" support@pretend.co < "${script_dir}/mail.txt"
+    /usr/sbin/sendmail -f "system@pretend.co" support@pretend.co < "${email}"
     if [ $? -ne 0 ]; then
         echo "Failed to send email"
+    
     fi
-
+        if [ -f "${email}" ]; then
+        rm "${email}"
+    fi
 else
-    exit 1
+    echo No new items
+    exit 0
 fi
 
 exit 0
