@@ -12,12 +12,6 @@ AVAILABLE_IPSWS=()
 LOADED_IPSWS=()
 LOAD_IPSWS=()
 
-# Check if curl command is available
-if ! command -v curl &> /dev/null; then
-    echo "curl  command is not found. Please install curl."
-    exit 1
-fi
-
 # Check if wget command is available
 if ! command -v wget &> /dev/null; then
     echo "wget command is not found. Please install wget."
@@ -47,7 +41,7 @@ cleanup() {
 trap cleanup EXIT
 
 # Get the list of IPSW files from Apple
-AVAILABLE_IPSWS=$(curl -s -L http://ax.phobos.apple.com.edgesuite.net/WebObjects/MZStore.woa/wa/com.apple.jingle.appserver.client.MZITunesClientCheck/version | sed -e 's/^[[:space:]]*//' -e 's/<string>//' -e 's/\(<\/string>\)*$//g' | grep -i 'http://' | grep -i Restore | grep -ie 'iPhone\|iPad\|iPod' | sort | uniq)
+AVAILABLE_IPSWS=$(wget --quiet --output-document - http://ax.phobos.apple.com.edgesuite.net/WebObjects/MZStore.woa/wa/com.apple.jingle.appserver.client.MZITunesClientCheck/version | sed -e 's/^[[:space:]]*//' -e 's/<string>//' -e 's/\(<\/string>\)*$//g' | grep -i 'http://' | grep -i Restore | grep -ie 'iPhone\|iPad\|iPod' | sort | uniq)
 
 # Previously loaded IPSWs by this script
 LOADED_IPSWS=($(< "${SCRIPT_DIR}/${0##*/}.db"))
@@ -68,7 +62,7 @@ if [ ${#LOAD_IPSWS[@]} -gt 0 ]; then
 
     for ((i=0; i<${#LOAD_IPSWS[@]}; i++)); do
         # Download file and retry up to 5 times
-        wget -t 5 -c "${LOAD_IPSWS[i]}"
+        wget --quiet -t 5 -c "${LOAD_IPSWS[i]}" --directory-prefix "${IPSW_DEST_FOLDER}"
         # Check if file download was successful
         if [ $? -eq 0 ]; then
             echo "${LOAD_IPSWS[i]}" >> "${SCRIPT_DIR}/${0##*/}.db"
