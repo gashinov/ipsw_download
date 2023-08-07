@@ -1,0 +1,93 @@
+#!/bin/bash
+
+# Paths to download files
+IPSW_DEST_FOLDER="/iOS/_latest"
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+# Hostname
+HOSTNAME=$(hostname)
+
+# Arrays to store IPSW file URLs
+AVAILABLE_IPSWS=()
+LOADED_IPSWS=()
+LOAD_IPSWS=()
+
+# Check if the job is already running
+# Create pid file
+SCRIPT_PID="/var/run/${0##*/}.pid"
+
+if [[ -f ${SCRIPT_PID} ]]; then
+    echo "Script is already running"
+    exit
+else
+    touch ${SCRIPT_PID}  # Create the pid file
+fi
+
+# Ensure PID file is removed on program exit.
+cleanup() {
+    rm -f -- "${SCRIPT_PID}"
+    unset AVAILABLE_IPSWS
+    unset LOADED_IPSWS
+    unset LOAD_IPSWS
+    rm "${SCRIPT_DIR}/mail.txt"
+}
+
+trap cleanup EXIT
+
+# Get the list of IPSW files from Apple
+AVAILABLE_IPSWS=$(curl -s -L http://phobos.apple.com/version | sed -e 's/^[[:space:]]*//' -e 's/<string>//' -e 's/\(<\/string>\)*$//g' | grep -i 'http://' | grep -i Restore | grep -ie 'iPhone\|iPad\|iPod' | sort | uniq)
+
+# Previously loaded IPSWs by this script
+LOADED_IPSWS=($(< "${SCRIPT_DIR}/${0##*/}.db"))
+
+# Compare the new list with the previously loaded list
+diff() {
+    awk 'BEGIN{RS=ORS=" "}
+         {NR==FNR?a[$0]++:a[$0]--}
+         END{for(k in a)if(a[k])print k}' <(echo -n "${!1}") <(echo -n "${!2}")
+}
+
+LOAD_IPSWS=($(diff AVAILABLE_IPSWS[@] LOADED_IPSWS[@]))
+
+# Download new files
+if [ ${#LOAD_IPSWS[@]} -gt 0 ]; then
+    # Create the IPSW folder if it doesn't exist
+    mkdir -p "${IPSW_DEST_FOLDER}"
+
+    # Check if wget command is available
+    if ! command -v wget &> /dev/null; then
+        echo "wget command is not found. Please install wget."
+        exit 1
+    fi
+
+    for ((i=0; i<${#LOAD_IPSWS[@]}; i++)); do
+        # Download file and retry up to 5 times
+        wget -t 5 -c "${LOAD_IPSWS[i]}"
+        # Check if file download was successful
+        if [ $? -eq 0 ]; then
+            echo "${LOAD_IPSWS[i]}" >> "${SCRIPT_DIR}/${0##*/}.db"
+        fi
+    done
+
+    # Grant permissions to user
+    chown -R nobody:support "${IPSW_DEST_FOLDER}"
+    chmod -R 644 "${IPSW_DEST_FOLDER}"
+
+    # Build the email content
+    echo "date: $(date +%d-%m-%y)" > "${SCRIPT_DIR}/mail.txt"
+    echo "to: support@pretend.co" >> "${SCRIPT_DIR}/mail.txt"
+    echo "subject: iOS Loader | New items were loaded" >> "${SCRIPT_DIR}/mail.txt"
+    echo "from: system@pretend.co" >> "${SCRIPT_DIR}/mail.txt"
+    echo "Some new items were found. Don't worry, they are already loaded." >> "${SCRIPT_DIR}/mail.txt"
+    printf "%s\n" "${LOAD_IPSWS[@]}" >> "${SCRIPT_DIR}/mail.txt"
+    echo >> "${SCRIPT_DIR}/mail.txt"
+    echo -- >> "${SCRIPT_DIR}/mail.txt"
+    echo "iOS Loader" >> "${SCRIPT_DIR}/mail.txt"
+
+    # Send the email
+    /usr/sbin/sendmail system@pretend.co < "${SCRIPT_DIR}/mail.txt"
+else
+    exit 1
+fi
+
+exit 0
