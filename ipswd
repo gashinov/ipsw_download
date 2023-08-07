@@ -8,9 +8,15 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 HOSTNAME=$(hostname)
 
 # Arrays to store IPSW file URLs
-AVAILABLE_IPSWS=()
-LOADED_IPSWS=()
-LOAD_IPSWS=()
+available_ipsws=()
+loaded_ipsws=()
+load_ipsws=()
+
+# Check if curl command is available
+if ! command -v curl &> /dev/null; then
+    echo "curl  command is not found. Please install curl."
+    exit 1
+fi
 
 # Check if wget command is available
 if ! command -v wget &> /dev/null; then
@@ -32,40 +38,53 @@ fi
 # Ensure PID file is removed on program exit.
 cleanup() {
     rm -f -- "${SCRIPT_PID}"
-    unset AVAILABLE_IPSWS
-    unset LOADED_IPSWS
-    unset LOAD_IPSWS
+    unset available_ipsws
+    unset loaded_ipsws
+    unset load_ipsws
     rm "${SCRIPT_DIR}/mail.txt"
 }
 
 trap cleanup EXIT
 
 # Get the list of IPSW files from Apple
-AVAILABLE_IPSWS=$(wget --quiet --output-document - http://ax.phobos.apple.com.edgesuite.net/WebObjects/MZStore.woa/wa/com.apple.jingle.appserver.client.MZITunesClientCheck/version | sed -e 's/^[[:space:]]*//' -e 's/<string>//' -e 's/\(<\/string>\)*$//g' | grep -i 'http://' | grep -i Restore | grep -ie 'iPhone\|iPad\|iPod' | sort | uniq)
+available_ipsws=$(wget --quiet --output-document - http://ax.phobos.apple.com.edgesuite.net/WebObjects/MZStore.woa/wa/com.apple.jingle.appserver.client.MZITunesClientCheck/version | sed -e 's/^[[:space:]]*//' -e 's/<string>//' -e 's/\(<\/string>\)*$//g' | grep -i 'http' | grep -i Restore | grep -ie 'iPhone\|iPad\|iPod' | sort | uniq)
 
 # Previously loaded IPSWs by this script
-LOADED_IPSWS=($(< "${SCRIPT_DIR}/${0##*/}.db"))
+loaded_ipsws=($(< "${SCRIPT_DIR}/${0##*/}.db"))
 
-# Compare the new list with the previously loaded list
+IFS=" " read -r -a available_ipsws <<< "$(echo "${available_ipsws[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ')"
+IFS=" " read -r -a loaded_ipsws <<< "$(echo "${loaded_ipsws[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ')"
+
 diff() {
-    awk 'BEGIN{RS=ORS=" "}
-         {NR==FNR?a[$0]++:a[$0]--}
-         END{for(k in a)if(a[k])print k}' <(echo -n "${!1}") <(echo -n "${!2}")
+    local array1=("${!1}")
+    local array2=("${!2}")
+    local diff_array=()
+
+    for item in "${array1[@]}"; do
+        if [[ ! " ${array2[@]} " =~ " $item " ]]; then
+            diff_array+=("$item")
+        fi
+    done
+
+    # echo "${diff_array[@]}"   # debug
 }
 
-LOAD_IPSWS=($(diff AVAILABLE_IPSWS[@] LOADED_IPSWS[@]))
+load_ipsws=($(diff available_ipsws[@] loaded_ipsws[@]))
+
+echo "${load_ipsws[*]}"
 
 # Download new files
-if [ ${#LOAD_IPSWS[@]} -gt 0 ]; then
+if [ -n "$load_ipsws" ]; then
+
     # Create the IPSW folder if it doesn't exist
     mkdir -p "${IPSW_DEST_FOLDER}"
 
-    for ((i=0; i<${#LOAD_IPSWS[@]}; i++)); do
+    for ((i=0; i<${#load_ipsws[@]}; i++)); do
         # Download file and retry up to 5 times
-        wget --quiet -t 5 -c "${LOAD_IPSWS[i]}" --directory-prefix "${IPSW_DEST_FOLDER}"
+        wget --quiet -t 5 -c "${load_ipsws[i]}" --directory-prefix "${IPSW_DEST_FOLDER}"
         # Check if file download was successful
         if [ $? -eq 0 ]; then
-            echo "${LOAD_IPSWS[i]}" >> "${SCRIPT_DIR}/${0##*/}.db"
+            echo "${load_ipsws[i]}" >> "${SCRIPT_DIR}/${0##*/}.db"
         fi
     done
 
@@ -74,13 +93,14 @@ if [ ${#LOAD_IPSWS[@]} -gt 0 ]; then
     chmod -R 644 "${IPSW_DEST_FOLDER}"
 
     # Build the email content
-    printf "date: %s\n" "$(date +%d-%m-%y)" "from: system@pretend.co" "to: support@pretend.co" "subject: New items were loaded" >> "${SCRIPT_DIR}/mail.txt"
-    printf  "Some new items were found. Don't worry, they are already loaded." >> "${SCRIPT_DIR}/mail.txt"
-    printf "%s\n" "${LOAD_IPSWS[@]}" >> "${SCRIPT_DIR}/mail.txt"
-    printf "\n" "--\n" "iOS Loader" >> "${SCRIPT_DIR}/mail.txt"
+    printf "date: %s\nfrom: system@pretend.co\nto: support@pretend.co\nsubject: New items were loaded\n\n" "$(date +%d-%m-%y)" >> "${SCRIPT_DIR}/mail.txt"
+    printf  "Some new items were found. Don't worry, they are already loaded.\n" >> "${SCRIPT_DIR}/mail.txt"
+    printf "%s\n" "${load_ipsws[@]}" >> "${SCRIPT_DIR}/mail.txt"
+    printf "\n--\niOS Loader\n" >> "${SCRIPT_DIR}/mail.txt"
 
     # Send the email
-    /usr/sbin/sendmail system@pretend.co < "${SCRIPT_DIR}/mail.txt"
+    /usr/sbin/sendmail -f "system@pretend.co" support@pretend.co < "${SCRIPT_DIR}/mail.txt"
+
 else
     exit 1
 fi
